@@ -11,9 +11,10 @@ from pdfminer.layout import LAParams
 from pdfminer.converter import PDFPageAggregator
 from pdfminer.layout import LAParams, LTTextBox, LTTextLine, LTFigure
 
+from PyPDF2 import PdfFileWriter, PdfFileReader
+
 from collections import defaultdict
 import sys
-import subprocess
 import re
 import numpy
 
@@ -75,9 +76,9 @@ def get_raw_bbox(inf):
             textcounts[text] +=1
     header_footers = []
     for k, v in textcounts.items():
-        if k.startswith('Copy'):
-            print k, v, page_counts
-        if v >= page_counts/3:
+        # if k.startswith('Copy'):
+        #     print k, v, page_counts
+        if v >= max(page_counts/3, 2):
             header_footers.append(k)
     print "header/footers: ", header_footers
     res = {}
@@ -121,16 +122,29 @@ def get_best_bbox(raw_bboxes):
     even_bboxes = numpy.array([v for (k,v) in raw_bboxes.items() if k %2 == 0])
     even_best_bbox = [numpy.percentile(even_bboxes[:,0], LOWER), numpy.percentile(even_bboxes[:,1], LOWER), numpy.percentile(even_bboxes[:,2], UPPER), numpy.percentile(even_bboxes[:,3], UPPER)]
 
-
     return odd_best_bbox, even_best_bbox
 
 
 def crop(inf, outf, odd_bbox, even_bbox):
-    subprocess.check_output(["pdfcrop",
-                             "--verbose",
-                             "--bbox-odd", "{} {} {} {}".format(*odd_bbox),
-                             "--bbox-even", "{} {} {} {}".format(*even_bbox),
-                             inf, outf])
+    inpdf = PdfFileReader(file(inf, 'rb'))
+    if inpdf.isEncrypted:
+        print '{} is encrypted'.format(inf)
+        # inpdf._override_encryption = True
+        # inpdf._flatten()
+        inpdf.decrypt(b'')
+
+    out = PdfFileWriter()
+    for i, page in enumerate(inpdf.pages):
+        page_no = i + 1
+        bbox = odd_bbox
+        if page_no % 2 == 0:
+            bbox = even_bbox
+        page.mediaBox.lowerLeft  = bbox[0], bbox[1]
+        page.mediaBox.upperRight = bbox[2], bbox[3]
+        out.addPage(page)
+    ous = file(outf, 'wb')
+    out.write(ous)
+    ous.close()
 
 def equalize(b1, b2):
     h1, w1 = b1[2] - b1[0], b1[3] - b1[1]
