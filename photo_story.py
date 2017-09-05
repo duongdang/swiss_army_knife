@@ -7,6 +7,9 @@ from dateutil.relativedelta import relativedelta
 import fnmatch
 import os
 import shutil
+from PIL import Image
+import exifread
+import logging
 
 ordinal = lambda n: "%d%s" % (n,"tsnrhtdd"[(n/10%10!=1)*(n%10<4)*n%10::4])
 
@@ -96,19 +99,35 @@ class Intervals(object):
             if interval.end >= dt:
                 return interval        
         return None
+
+    def get_date_tag(self, fn):
+        with open(fn, 'rb') as fh:
+            tags = exifread.process_file(fh, stop_tag="exifread DateTimeOriginal")
+            dateTaken = tags["EXIF DateTimeOriginal"]
+            return dateTaken
+    
+    def get_dt(self, fn):
+        ext = os.path.splitext(fn)[1]
+        if ext.upper() in ['.JPG', '.PNG']:
+            try:
+                tagval = self.get_date_tag(fn)
+                return datetime.datetime.strptime(str(tagval), "%Y:%m:%d %H:%M:%S")                
+            except Exception as err:
+                logging.warning("Could not get taken date from image {}. Error was {}".format(fn, err))
+        mtime = os.path.getmtime(fn)
+        return datetime.datetime.fromtimestamp(mtime)
     
     def process_dir(self, d):
         for root, dirnames, filenames in os.walk(d):
             for filename in filenames:
                 try:
-                    mtime = os.path.getmtime(os.path.join(root, filename))
-                    mdt = datetime.datetime.fromtimestamp(mtime)
+                    mdt = self.get_dt(os.path.join(root, filename))
                     interval = self.find(mdt)
                     if not interval:
                         continue
                     yield filename, root, mdt, interval
-                except:
-                    print "Could not process {} {}".format(root, filename)
+                except Exception as err:
+                    logging.warning("Could not process {} {}. Error was: {}".format(root, filename, err))
     
 def main():
     parser = argparse.ArgumentParser(description = 'Process photo story of a person')
@@ -154,7 +173,7 @@ def main():
                 i += 1
 
             if os.path.exists(new_fn):
-                print "Same dt ext exists, skipping {} ...".format(new_fn)
+                logging.debug("Same dt ext exists, skipping {} ...".format(new_fn))
                 continue
                 
             taken_names.add(new_fn)
@@ -162,11 +181,11 @@ def main():
             file_count += 1
             total_size += size
             if args.dry_run:
-                print "Copying {} to {}".format(src_fn, new_fn)
+                logging.debug("Copying {} to {}".format(src_fn, new_fn))
             else:
                 if not os.path.exists(new_dir):
                     os.makedirs(new_dir)            
                 shutil.copyfile(src_fn, new_fn)
-    print "Copied {} files totalling {} bytes".format(file_count, total_size)
+    logging.info("Copied {} files totalling {} bytes".format(file_count, total_size))
 if __name__ == "__main__":
     main()
